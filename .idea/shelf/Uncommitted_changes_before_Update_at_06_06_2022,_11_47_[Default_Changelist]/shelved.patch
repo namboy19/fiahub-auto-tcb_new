@@ -1,0 +1,1673 @@
+Index: app/src/main/java/com/fiahub/nam/autosmartotp/service/AutoClickService.kt
+===================================================================
+diff --git a/app/src/main/java/com/fiahub/nam/autosmartotp/service/AutoClickService.kt b/app/src/main/java/com/fiahub/autosmartotp/vcb/service/AutoClickServiceVcb.kt
+rename from app/src/main/java/com/fiahub/nam/autosmartotp/service/AutoClickService.kt
+rename to app/src/main/java/com/fiahub/autosmartotp/vcb/service/AutoClickServiceVcb.kt
+--- a/app/src/main/java/com/fiahub/nam/autosmartotp/service/AutoClickService.kt	
++++ b/app/src/main/java/com/fiahub/autosmartotp/vcb/service/AutoClickServiceVcb.kt	
+@@ -1,365 +1,431 @@
+-package com.fiahub.nam.autosmartotp.service
++package com.fiahub.autosmartotp.vcb.service
+ 
+ import android.accessibilityservice.AccessibilityService
+-import android.accessibilityservice.GestureDescription
+-import android.content.*
+-import android.graphics.Path
+-import android.graphics.Rect
++import android.content.Intent
+ import android.os.Bundle
+-import android.os.Handler
+ import android.support.v4.view.accessibility.AccessibilityNodeInfoCompat
+-import android.util.DisplayMetrics
+ import android.util.Log
+-import android.view.WindowManager
+ import android.view.accessibility.AccessibilityEvent
+ import android.view.accessibility.AccessibilityNodeInfo
+-import android.widget.Button
+-import android.widget.EditText
+-import com.fiahub.nam.autosmartotp.MainActivity
+-import com.fiahub.nam.autosmartotp.R
+-import com.fiahub.nam.autosmartotp.logd
+-import java.lang.Exception
++import com.fiahub.autosmartotp.vcb.MainActivity
++import com.fiahub.autosmartotp.vcb.R
++import com.fiahub.autosmartotp.vcb.Utils
++import com.fiahub.autosmartotp.vcb.logd
++import com.fiahub.autosmartotp.vcb.model.AuthenticateAccount
++import com.fiahub.autosmartotp.vcb.model.TransferFail
++import com.fiahub.autosmartotp.vcb.model.TransferInfo
++import com.fiahub.autosmartotp.vcb.service.api.ApiService
++import kotlinx.coroutines.*
++import kotlinx.coroutines.flow.catch
++import kotlinx.coroutines.flow.collect
++import kotlinx.coroutines.flow.flow
++import kotlinx.coroutines.flow.flowOn
++import kotlin.coroutines.CoroutineContext
+ 
+ 
+-var autoClickService: AutoClickService? = null
++var autoClickServiceVcb: AutoClickServiceVcb? = null
+ 
+-class AutoClickService : AccessibilityService() {
++class AutoClickServiceVcb : AccessibilityService(), CoroutineScope {
+ 
+     override fun onInterrupt() {
+         // NO-OP
+     }
+ 
+-    private var onGetOtpCompleted: ((String) -> Unit)? = null
+-    private var onGetOtpFailed: (() -> Unit)? = null
++    private var onCompletedTransfer: (() -> Unit)? = null
++    private var onSucceedTransfer: (() -> Unit)? = null
++    private var onTransferFailed: ((TransferFail) -> Unit)? = null
+ 
+     private var isStarted = false
+-    private var transferCode = ""
+-    private var unlockOtpCode = ""
++
++    private var transferData: TransferInfo? = null
++    private var authenticateAccount: AuthenticateAccount? = null
+ 
+     private var isLoadedLoginScreen = false
+-    private var isLoadedInputTransCodeScreen = false
++    private var isLoadedHomeScreen = false
++    private var isLoadedTransferScreen = false
++    private var isInputedTransferInfo = false
++    private var isLoadedPickBankBranchScreen = false
++    private var isLoadedConfirmTransferScreen = false
+     private var isLoadedUnlockOtpScreen = false
+-    private var isLoadedGeneratedOtpScreen = false
+-
+-    private val nodeInfos = mutableListOf<AccessibilityNodeInfo>()
+-
+-    private val listKeyBoardLocation by lazy {
+-
+-        val displayMetrics = DisplayMetrics()
+-        (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(
+-            displayMetrics)
+-
+-        val width = displayMetrics.widthPixels
+-        val height = displayMetrics.heightPixels
+-
+-        val buttonWidth = width / 4
+-        val halfButtonWidth = buttonWidth / 2
+-
+-        val buttonHeight = resources.getDimension(R.dimen.button_number_height)
+-        val halfButtonHeight = buttonHeight / 2
+-
+-        val list = mutableListOf<Triple<Int, Float, Float>>()
+-
+-
+-        for (i in 1..3) {
+-            list.add(Triple(i,
+-                (height - buttonHeight * 3) - halfButtonHeight,
+-                (width - (5 - i % 4) * buttonWidth).toFloat() + halfButtonWidth))
+-        }
+-
+-        for (i in 4..6) {
+-            list.add(Triple(i,
+-                (height - buttonHeight * 2) - halfButtonHeight,
+-                (width - (5 - (i - 3) % 4) * buttonWidth).toFloat() + halfButtonWidth))
+-        }
+-
+-        for (i in 7..9) {
+-            list.add(Triple(i,
+-                (height - buttonHeight * 1) - halfButtonHeight,
+-                (width - (5 - (i - 6) % 4) * buttonWidth).toFloat() + halfButtonWidth))
+-        }
+-
+-        list.add(Triple(0,
+-            height.toFloat() - halfButtonHeight,
+-            (width - 3 * buttonWidth).toFloat() + halfButtonWidth))
++    private var isLoadedSuccessTransferScreen = false
+ 
+-        list
+-    }
+ 
+-    fun isTcbOpening(): Boolean {
+-        if (nodeInfos.size == 0) {
+-            getNodeInfo(rootInActiveWindow)
+-        }
++    companion object {
++        private const val DELAY_TIME_FOR_RENDER_SCREEN = 300L
++    }
+ 
+-        if (nodeInfos.firstOrNull()?.packageName == "android") {
++    fun isBankAppOpening(): Boolean? {
++        if ((rootInActiveWindow?.packageName == null)) {
++            return null
++        } else if (rootInActiveWindow?.packageName == "android") {
+             /**
+              * try to dissmiss system dialog "App not response"
+              */
+             rootInActiveWindow?.findAccessibilityNodeInfosByViewId("android:id/aerr_close")
+                 ?.firstOrNull()?.performAction(AccessibilityNodeInfoCompat.ACTION_CLICK)
+-
+             return false
+         } else {
+-            return nodeInfos.firstOrNull()?.packageName == "com.fastacash.tcb"
++            return rootInActiveWindow?.packageName == getString(R.string.bank_package_id)
+         }
+     }
+ 
+     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+-
+         Log.d("nam", event.toString())
+-
+-        nodeInfos.clear()
+-
+-        getNodeInfo(rootInActiveWindow)
+-
+         handleScreenChanged()
+     }
+ 
+-    private fun dispatchPinUnlockOtp() {
+-
+-        listKeyBoardLocation.find { it.first == 5 }?.let {
+-
+-            val path = Path()
+-            path.moveTo(it.third, it.second)
+-
+-            val builder = GestureDescription.Builder()
+-            val gestureDescription = builder
+-                .addStroke(GestureDescription.StrokeDescription(path, 1, 50))
+-                .build()
+-
+-            dispatchGesture(gestureDescription, null, null)
+-        }
+-
+-        /**
+-         * wait for editext showed and then set unclock PIN
+-         */
+-        Handler().postDelayed({
+-
+-            if (!isStarted) return@postDelayed
+-
+-            nodeInfos.find { it.className == EditText::class.java.name }?.let {
+-                val arguments = Bundle()
+-                arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+-                    unlockOtpCode)
+-
+-                it.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+-            }
+-
+-            /**
+-             * wait for button enabled after input PIN then perform click
+-             */
+-            Handler().postDelayed({
+-                if (!isStarted) return@postDelayed
+-
+-                nodeInfos.find { it.text == "Lấy mã OTP" && it.className == Button::class.java.name }
+-                    ?.performAction(AccessibilityNodeInfoCompat.ACTION_CLICK)
+-            }, 200)
+-
+-        }, 200)
+-
+-
+-        /* unlockOtpCode.forEachIndexed { index, number ->
+-
+-             listKeyBoardLocation.find { number.digitToInt() == it.first }?.let {
+-
+-                 Handler().postDelayed({
+-                     val path = Path()
+-                     path.moveTo(it.third, it.second)
+-
+-                     val builder = GestureDescription.Builder()
+-                     val gestureDescription = builder
+-                         .addStroke(GestureDescription.StrokeDescription(path, 1, 50))
+-                         .build()
+-
+-                     dispatchGesture(gestureDescription, null, null)
+-                 }, (index + 1) * 200L)
+-             }
+-         }*/
+-    }
+-
+     private fun isLoginScreen(): Boolean {
+-
+         //--login screen
+-        return nodeInfos.find { it.text == "ĐĂNG NHẬP" } != null
++        return !rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/lblForgetPassword")
++            .isNullOrEmpty()
+     }
+ 
+-    private fun isInputTransIDScreen(): Boolean {
+-
+-        return nodeInfos.find { it.text == "Nhập mã giao dịch" || it.hintText == "Nhập mã giao dịch" } != null
++    private fun isHomeScreen(): Boolean {
++        return !rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/ivLogout")
++            .isNullOrEmpty() &&
++                !rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/rvQuickMenu")
++                    .isNullOrEmpty()
+     }
+ 
+-    private fun isUnclockOtpScreen(): Boolean {
+-
+-        return nodeInfos.find { it.text == "Nhập mã mở khóa Smart OTP" } != null
++    private fun isTransferScreen(): Boolean {
++        return !rootInActiveWindow?.findAccessibilityNodeInfosByText("Thông tin người chuyển")
++            .isNullOrEmpty() &&
++                !rootInActiveWindow?.findAccessibilityNodeInfosByText("Thông tin người hưởng")
++                    .isNullOrEmpty()
+     }
+ 
+-    private fun isGeneratedOtpScreen(): Boolean {
+-        return nodeInfos.find { it.text == "Sao chép mã OTP" } != null
++    private fun isPickBankBranchScreen(): Boolean {
++        return !rootInActiveWindow?.findAccessibilityNodeInfosByText("ngân hàng thụ hưởng")
++            .isNullOrEmpty() &&
++                !rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/edtSearch")
++                    .isNullOrEmpty()
+     }
+ 
+-
+-    private fun getNodeInfo(node: AccessibilityNodeInfo?) {
+-
+-        if (node == null) {
+-            return
+-        }
++    private fun isConfirmTransferScreen(): Boolean {
++        return !rootInActiveWindow?.findAccessibilityNodeInfosByText("xác nhận thông tin")
++            .isNullOrEmpty()
++    }
+ 
+-        try {
+-            if (!node.text.isNullOrEmpty() || !node.hintText.isNullOrEmpty()) {
+-                nodeInfos.add(node)
+-            }
++    private fun isSuccessTransferScreen(): Boolean {
++        return !rootInActiveWindow?.findAccessibilityNodeInfosByText("chuyển khoản thành công")
++            .isNullOrEmpty()
++    }
+ 
+-            if (node.childCount > 0) {
+-                for (i in 0 until node.childCount) {
+-                    node.getChild(i)?.let {
+-                        getNodeInfo(it)
+-                    }
+-                }
+-            }
+-        } catch (e: Exception) {
+-            e.printStackTrace()
+-        }
++    private fun isUnlockOtpScreen(): Boolean {
++        return !rootInActiveWindow?.findAccessibilityNodeInfosByText("xác thực giao dịch")
++            .isNullOrEmpty()
+     }
+ 
+-
+-    fun startGetOtp(transCode: String,
+-                    _unclockOtpCode: String,
+-                    onCompleted: (String) -> Unit,
+-                    onFailed: () -> Unit) {
++    fun startGetOtp(transfer: TransferInfo,
++                    account: AuthenticateAccount,
++                    onCompleted: () -> Unit,
++                    onSucceed: () -> Unit,
++                    onFailed: (TransferFail) -> Unit) {
+ 
+         isStarted = true
+-        transferCode = transCode
+-        this.unlockOtpCode = _unclockOtpCode
+-        onGetOtpCompleted = onCompleted
+-        onGetOtpFailed = onFailed
++        transferData = transfer
++        authenticateAccount = account
+ 
+-        if (nodeInfos.isEmpty()) {
+-            getNodeInfo(rootInActiveWindow)
+-        }
++        onCompletedTransfer = onCompleted
++        onSucceedTransfer = onSucceed
++        onTransferFailed = onFailed
++
+         handleScreenChanged()
+     }
+ 
+     fun stopGetOtp() {
+         isStarted = false
+         isLoadedLoginScreen = false
+-        isLoadedInputTransCodeScreen = false
++        isLoadedHomeScreen = false
++        isLoadedTransferScreen = false
++        isInputedTransferInfo = false
++        isLoadedPickBankBranchScreen = false
++        isLoadedConfirmTransferScreen = false
+         isLoadedUnlockOtpScreen = false
+-        isLoadedGeneratedOtpScreen = false
+-        onGetOtpFailed = null
+-        onGetOtpCompleted = null
++        isLoadedSuccessTransferScreen = false
+     }
+ 
+     private fun handleScreenChanged() {
+ 
+-        if (!isStarted) {
+-            return
+-        }
+-
+-        if (!isTcbOpening()){
+-            onGetOtpFailed?.invoke()
+-            stopGetOtp()
+-        }
++        GlobalScope.launch(Dispatchers.Main) {
++
++            if (!isStarted) {
++                return@launch
++            }
+ 
+-        when {
+-            isLoginScreen() && !isLoadedLoginScreen -> {
+-
+-                isLoadedLoginScreen = true
++            when {
++                isLoginScreen() && !isLoadedLoginScreen -> {
++                    isLoadedLoginScreen = true
+ 
+-                nodeInfos.find { it.text == "Lấy mã OTP" }
+-                    ?.performAction(AccessibilityNodeInfoCompat.ACTION_CLICK)
+-            }
++                    //wait screen fully display
++                    delay(DELAY_TIME_FOR_RENDER_SCREEN)
++
++                    rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/edtInput")
++                        ?.firstOrNull()?.let {
++                            val arguments = Bundle()
++                            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
++                                authenticateAccount?.password)
++                            it.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
++
++                            rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/btnNext")
++                                ?.firstOrNull()
++                                ?.performAction(AccessibilityNodeInfoCompat.ACTION_CLICK)
++                        }
++                }
++
++                isHomeScreen() && !isLoadedHomeScreen -> {
++                    //sendLog("-> home screen")
++
++                    isLoadedHomeScreen = true
++                    //wait screen fully display
++                    delay(DELAY_TIME_FOR_RENDER_SCREEN)
++
++                    //using recycler view with item, so can not specific the viewID
++
++                    if (transferData?.isTransferOutSideVcb == true) {
++                        rootInActiveWindow?.findAccessibilityNodeInfosByText("Chuyển tiền nhanh 24/7 ngoài VCB")
++                            ?.firstOrNull()?.let {
++                                performClick(it)
++                            }
++                    } else {
++                        rootInActiveWindow?.findAccessibilityNodeInfosByText("Chuyển tiền trong VCB")
++                            ?.firstOrNull()?.let {
++                                performClick(it)
++                            }
++                    }
++                }
+ 
+-            isInputTransIDScreen() && !isLoadedInputTransCodeScreen -> {
++                isTransferScreen() && !isLoadedTransferScreen -> {
+ 
+-                isLoadedInputTransCodeScreen = true
++                    //sendLog("-> transfer screen")
+ 
+-                nodeInfos.find { it.hintText == "Nhập mã giao dịch" }?.let {
++                    isLoadedTransferScreen = true
++                    isLoadedPickBankBranchScreen = false
+ 
+-                    val arguments = Bundle()
+-                    arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+-                        transferCode)
+-                    it.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
++                    //wait to load balance
++                    delay(1000)
++
++                    //input bank account num
++                    rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/edtContent1")
++                        ?.firstOrNull()?.let {
++                            val arguments = Bundle()
++                            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
++                                transferData?.transferBankAccountNum)
++                            it.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
++                        }
++
++                    //input amount money
++                    rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/edtContent1")
++                        ?.getOrNull(1)?.let {
++                            val arguments = Bundle()
++                            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
++                                transferData?.transferMoney)
++                            it.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
++                        }
++
++                    //input transfer note
++                    rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/edtContent2")
++                        ?.firstOrNull()?.let {
++                            val arguments = Bundle()
++                            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
++                                transferData?.transferNote)
++                            it.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
++                        }
++
++                    //----
++
++                    if (!isInputedTransferInfo && transferData?.isTransferOutSideVcb == true) {
++                        //pick bank branch
++                        rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/llContent3")
++                            ?.firstOrNull()?.let {
++                                performClick(it)
++                            }
++                    } else {
++                        //create transfer
++                        rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/btContinue")
++                            ?.firstOrNull()?.let {
++                                performClick(it)
++                            }
++                    }
++
++                    isInputedTransferInfo = true
++                }
++
++                isPickBankBranchScreen() && !isLoadedPickBankBranchScreen -> {
++
++                    //sendLog("-> pick bank screen")
++
++                    isLoadedPickBankBranchScreen = true
++                    isLoadedTransferScreen = false
++
++                    //wait screen fully display
++                    delay(DELAY_TIME_FOR_RENDER_SCREEN)
++
++                    rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/edtSearch")
++                        ?.firstOrNull()
++                        ?.let {
++                            //input search bank name
++                            val arguments = Bundle()
++                            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
++                                transferData?.transferBankBranch)
++                            it.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
++
++
++                            //wait search bank result display
++                            delay(DELAY_TIME_FOR_RENDER_SCREEN)
++
++                            // click select bank
++                            rootInActiveWindow?.findAccessibilityNodeInfosByText(transferData?.transferBankBranch)
++                                ?.find { it.className == "android.widget.TextView" }?.let {
++                                    performClick(it)
++                                }
++                        }
++                }
++
++                isConfirmTransferScreen() && !isLoadedConfirmTransferScreen -> {
++                    //sendLog("-> confirm transfer screen")
++
++                    isLoadedConfirmTransferScreen = true
++
++                    //wait screen fully display
++                    delay(DELAY_TIME_FOR_RENDER_SCREEN)
++
++                    rootInActiveWindow.findAccessibilityNodeInfosByViewId("com.VCB:id/tvContent")
++                        .find { checkCorrectAccountName(it.text.toString()) }?.let {
++                            rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/llptxt")
++                                ?.firstOrNull()?.let {
++
++                                    performClick(it)
++
++                                    //wait popup select otp type  show
++                                    delay(DELAY_TIME_FOR_RENDER_SCREEN)
++
++                                    rootInActiveWindow?.findAccessibilityNodeInfosByText("smart otp")
++                                        ?.firstOrNull()?.let {
++                                            performClick(it)
++                                        }
++
++                                    //wait popup dismiss
++                                    delay(DELAY_TIME_FOR_RENDER_SCREEN)
+ 
+-                    /**
+-                     * delay time for button enabled
+-                     */
+-                    Handler().postDelayed({
+-                        if (!isStarted) return@postDelayed
++                                    rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/btContinue")
++                                        ?.firstOrNull()?.let { performClick(it) }
++                                }
++                        } ?: kotlin.run {
+ 
+-                        nodeInfos.find { it.text == "Xác nhận" }
+-                            ?.performAction(AccessibilityNodeInfoCompat.ACTION_CLICK)
+-                    }, 100)
+-                }
+-            }
++                        rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/ivTitleRight")
++                            ?.firstOrNull()?.let {
++                                performClick(it)
++                                stopGetOtp()
++                                onTransferFailed?.invoke(TransferFail.WrongAccountName(""))
++                            }
++                    }
++                }
+ 
+-            isUnclockOtpScreen() && !isLoadedUnlockOtpScreen -> {
++                isUnlockOtpScreen() && !isLoadedUnlockOtpScreen -> {
++                    //sendLog("-> unlock otp screen")
+ 
+-                isLoadedUnlockOtpScreen = true
++                    isLoadedUnlockOtpScreen = true
+ 
+-                nodeInfos.find { it.text == "Lấy mã OTP" && it.className == Button::class.java.name }
+-                    ?.let {
++                    //wait screen fully display
++                    delay(DELAY_TIME_FOR_RENDER_SCREEN)
++
++                    // set unlock otp pass to edittext
++                    rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/otp")
++                        ?.firstOrNull()
++                        ?.let {
++                            val arguments = Bundle()
++                            arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
++                                authenticateAccount?.unlockOtpPassword)
+ 
+-                        val rect = Rect()
+-                        it.getBoundsInScreen(rect)
++                            it.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
++                        }
+ 
+-                        val path = Path()
+-                        path.moveTo(rect.exactCenterX(), rect.top.toFloat() - 30)
++                    rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/submit")
++                        ?.firstOrNull()
++                        ?.performAction(AccessibilityNodeInfoCompat.ACTION_CLICK)
+ 
+-                        val builder = GestureDescription.Builder()
+-                        val gestureDescription = builder
+-                            .addStroke(GestureDescription.StrokeDescription(path, 1, 10))
+-                            .build()
+-                        dispatchGesture(gestureDescription, null, null)
+-                    }
++                    //wait for smart otp shown
++                    delay(DELAY_TIME_FOR_RENDER_SCREEN)
+ 
+-                /**
+-                 * wait for keyboard showed and dispatch key press PIN
+-                 */
+-                Handler().postDelayed({
+-                    if (!isStarted) return@postDelayed
++                    rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/btContinue")
++                        ?.firstOrNull()
++                        ?.performAction(AccessibilityNodeInfoCompat.ACTION_CLICK)
+ 
+-                    dispatchPinUnlockOtp()
+-                }, 1200)
+-            }
++                    onCompletedTransfer?.invoke()
++                }
+ 
+-            isGeneratedOtpScreen() && !isLoadedGeneratedOtpScreen -> {
+-                isLoadedGeneratedOtpScreen = true
++                isSuccessTransferScreen() && !isLoadedSuccessTransferScreen -> {
++                    //sendLog("-> success transfer screen")
++                    isLoadedSuccessTransferScreen = true
+ 
+-                nodeInfos.find { it.text == "Mã OTP của quý khách" }?.let {
++                    //wait screen fully display
++                    delay(DELAY_TIME_FOR_RENDER_SCREEN)
+ 
+-                    nodeInfos.getOrNull(nodeInfos.indexOf(it) + 1)?.let {
+-                        onGetOtpCompleted?.invoke(it.text.toString())
+-                        stopGetOtp()
+-                    }
++                    rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/ivHome")
++                        ?.firstOrNull()?.performAction(AccessibilityNodeInfoCompat.ACTION_CLICK)
++
++                    // notify completed transfer
++                    stopGetOtp()
++                    onSucceedTransfer?.invoke()
++                }
++
++                else -> {
++                    //dissmiss dialog:
++                    // 1/ case feedback the app after some transfer success
++                    rootInActiveWindow?.findAccessibilityNodeInfosByViewId("com.VCB:id/btCancel")
++                        ?.firstOrNull()?.performAction(AccessibilityNodeInfoCompat.ACTION_CLICK)
+                 }
+-
+-                nodeInfos.find { it.text == "Giao dịch khác" }?.let {
+-                    it.performAction(AccessibilityNodeInfoCompat.ACTION_CLICK)
+-                }
+-            }
++            }
++        }
++    }
++
++    private fun checkCorrectAccountName(accountName: String): Boolean {
++        return Utils.removeUnicode(accountName.uppercase()) == Utils.removeUnicode(transferData?.transferBankAccountName?.uppercase()
++            ?: "")
++    }
++
++    private fun performClick(node: AccessibilityNodeInfo) {
++        //-- due to the item is wrapper in another view, so only the parents receive click event
++        // force click all parent of item
++        node.performAction(AccessibilityNodeInfoCompat.ACTION_CLICK)
++        var currentNode = node
++        while (currentNode.parent != null) {
++            currentNode.parent.performAction(AccessibilityNodeInfoCompat.ACTION_CLICK)
++            currentNode = currentNode.parent
+         }
+     }
+ 
+     override fun onServiceConnected() {
+         super.onServiceConnected()
+         "onServiceConnected".logd()
+-        autoClickService = this
++        autoClickServiceVcb = this
+         startActivity(Intent(this, MainActivity::class.java)
+             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+     }
+ 
+     override fun onUnbind(intent: Intent?): Boolean {
+-        "AutoClickService onUnbind".logd()
+-        autoClickService = null
++        "AutoClickServiceVcb onUnbind".logd()
++        autoClickServiceVcb = null
+         return super.onUnbind(intent)
+     }
+ 
+-
+     override fun onDestroy() {
+-        "AutoClickService onDestroy".logd()
+-        autoClickService = null
++        "AutoClickServiceVcb onDestroy".logd()
++        autoClickServiceVcb = null
+         super.onDestroy()
+     }
+ 
++    private fun sendLog(log: String) = launch {
++        flow {
++            emit(ApiService.apiService.sendTelegramLog(log).await())
++        }.flowOn(Dispatchers.IO).catch {
++            //emit(null)
++        }.collect {
+ 
++        }
++    }
++
++    override val coroutineContext: CoroutineContext
++        get() = SupervisorJob() + Dispatchers.Main
+ }
+\ No newline at end of file
+Index: app/src/main/java/com/fiahub/nam/autosmartotp/service/api/ApiService.kt
+===================================================================
+diff --git a/app/src/main/java/com/fiahub/nam/autosmartotp/service/api/ApiService.kt b/app/src/main/java/com/fiahub/autosmartotp/vcb/service/api/ApiService.kt
+rename from app/src/main/java/com/fiahub/nam/autosmartotp/service/api/ApiService.kt
+rename to app/src/main/java/com/fiahub/autosmartotp/vcb/service/api/ApiService.kt
+--- a/app/src/main/java/com/fiahub/nam/autosmartotp/service/api/ApiService.kt	
++++ b/app/src/main/java/com/fiahub/autosmartotp/vcb/service/api/ApiService.kt	
+@@ -1,15 +1,11 @@
+-package com.fiahub.nam.autosmartotp.service.api
++package com.fiahub.autosmartotp.vcb.service.api
+ 
+-import android.content.Context
+-import com.fiahub.nam.autosmartotp.BuildConfig
+-import io.reactivex.Single
++import com.fiahub.autosmartotp.vcb.BuildConfig
++import com.jakewharton.retrofit2.adapter.kotlin.coroutines.CoroutineCallAdapterFactory
++import kotlinx.coroutines.Deferred
+ import okhttp3.OkHttpClient
+-import okhttp3.Response
+ import okhttp3.logging.HttpLoggingInterceptor
+-import retrofit2.Call
+-import retrofit2.Callback
+ import retrofit2.Retrofit
+-import retrofit2.adapter.rxjava2.RxJava2CallAdapterFactory
+ import retrofit2.converter.gson.GsonConverterFactory
+ import retrofit2.http.GET
+ import retrofit2.http.POST
+@@ -27,18 +23,21 @@
+             Retrofit.Builder()
+                 .baseUrl("https://www.coingiatot.com/")
+                 .addConverterFactory(GsonConverterFactory.create())
+-                .addCallAdapterFactory(RxJava2CallAdapterFactory.create())
++                .addCallAdapterFactory(CoroutineCallAdapterFactory())
+                 .client(provideOkHttpClient())
+                 .build().create(ApiService::class.java)
+         }
+     }
+ 
+     @GET("https://v2.coingiatot.com/api/v1/bank_otps/transaction_code?secret=0c87be9905a7455aa23896d1aabbbf2f")
+-    fun getPendingTransaction(): Single<PendingTransaction>
++    fun getPendingTransaction(): Deferred<PendingTransaction>
+ 
+     @POST("https://v2.coingiatot.com/api/v1/bank_otps/smart_otp?secret=0c87be9905a7455aa23896d1aabbbf2f")
+     fun sendOtp(@Query("otp") otp: String?,
+-                @Query("code") code: String?): Single<Any>
++                @Query("code") code: String?): Deferred<Any>
++
++    @POST("https://api.telegram.org/bot5414467257:AAFkxSs6Vk9oupn0_wMt2YYFTCGaL4xx8os/sendMessage?chat_id=-1001696372823")
++    fun sendTelegramLog(@Query("text") text: String?): Deferred<Any>
+ 
+ }
+ 
+Index: app/src/main/java/com/fiahub/nam/autosmartotp/service/FloatingClickService.kt
+===================================================================
+diff --git a/app/src/main/java/com/fiahub/nam/autosmartotp/service/FloatingClickService.kt b/app/src/main/java/com/fiahub/autosmartotp/vcb/service/FloatingClickService.kt
+rename from app/src/main/java/com/fiahub/nam/autosmartotp/service/FloatingClickService.kt
+rename to app/src/main/java/com/fiahub/autosmartotp/vcb/service/FloatingClickService.kt
+--- a/app/src/main/java/com/fiahub/nam/autosmartotp/service/FloatingClickService.kt	
++++ b/app/src/main/java/com/fiahub/autosmartotp/vcb/service/FloatingClickService.kt	
+@@ -1,29 +1,36 @@
+-package com.fiahub.nam.autosmartotp.service
++package com.fiahub.autosmartotp.vcb.service
+ 
+ import android.app.Service
+ import android.content.Context
+ import android.content.Intent
+-import android.content.pm.PackageManager
+ import android.content.res.Configuration
+ import android.graphics.PixelFormat
+ import android.os.Build
+-import android.os.Handler
+ import android.os.IBinder
+ import android.view.LayoutInflater
+ import android.view.WindowManager
+ import android.widget.RelativeLayout
+ import android.widget.TextView
+ import android.widget.Toast
+-import com.fiahub.nam.autosmartotp.R
+-import com.fiahub.nam.autosmartotp.TouchAndDragListener
+-import com.fiahub.nam.autosmartotp.dp2px
+-import com.fiahub.nam.autosmartotp.logd
+-import com.fiahub.nam.autosmartotp.service.api.ApiService
+-import io.reactivex.android.schedulers.AndroidSchedulers
+-import io.reactivex.schedulers.Schedulers
++import com.fiahub.autosmartotp.vcb.R
++import com.fiahub.autosmartotp.vcb.TouchAndDragListener
++import com.fiahub.autosmartotp.vcb.dp2px
++import com.fiahub.autosmartotp.vcb.logd
++import com.fiahub.autosmartotp.vcb.model.AuthenticateAccount
++import com.fiahub.autosmartotp.vcb.model.TransferFail
++import com.fiahub.autosmartotp.vcb.model.TransferInfo
++import com.fiahub.autosmartotp.vcb.service.api.ApiService
++import kotlinx.coroutines.*
++import kotlinx.coroutines.flow.catch
++import kotlinx.coroutines.flow.collect
++import kotlinx.coroutines.flow.flow
++import kotlinx.coroutines.flow.flowOn
++import java.util.*
++import kotlin.coroutines.CoroutineContext
+ 
+ 
+-class FloatingClickService : Service() {
++class FloatingClickService : Service(), CoroutineScope {
++
+     private lateinit var manager: WindowManager
+     private lateinit var view: RelativeLayout
+     private lateinit var params: WindowManager.LayoutParams
+@@ -31,27 +38,32 @@
+     private var yForRecord = 0
+     private var startDragDistance: Int = 0
+ 
++    ///-------------------------------------------------------------
+     private var isOn = false
+-    private var otpPin = ""
+-    private var transactionID = ""
++    private var transferInfo: TransferInfo? = null
++    private var authenticateAccount: AuthenticateAccount? = null
+ 
+     companion object {
+         val POOLING_INTERVAL = 20000L
+-        val RESTART_INTERVAL = 10000L
++        val RESTART_INTERVAL = 15000L
+         val RESTART_FAIL_MAX = 3
+ 
+-        val PARAM_UNLOCK_OTP_PIN = "PARAM_UNLOCK_OTP_PIN"
++        const val PARAM_UNLOCK_OTP_PIN = "PARAM_UNLOCK_OTP_PIN"
++        const val PARAM_PASSWORD = "PARAM_PASSWORD"
+ 
+-        fun start(context: Context, pin: String) {
++        fun start(context: Context, pin: String, pass: String) {
+             context.startService(Intent(context, FloatingClickService::class.java).apply {
+                 putExtra(PARAM_UNLOCK_OTP_PIN, pin)
++                putExtra(PARAM_PASSWORD, pass)
+             })
+-
+         }
+     }
+ 
+     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+-        otpPin = intent?.getStringExtra(PARAM_UNLOCK_OTP_PIN) ?: ""
++
++        authenticateAccount = AuthenticateAccount(intent?.getStringExtra(PARAM_PASSWORD) ?: "",
++            intent?.getStringExtra(PARAM_UNLOCK_OTP_PIN) ?: "")
++
+         return super.onStartCommand(intent, flags, startId)
+     }
+ 
+@@ -86,9 +98,10 @@
+                 isOn = !isOn
+ 
+                 if (isOn) {
+-                    startGetOtp()
++                    openBankApp()
++                    processTransaction()
+                 } else {
+-                    stopGetOtp()
++                    stopAuto()
+                 }
+                 view.findViewById<TextView>(R.id.button).text = if (isOn) "ON" else "OFF"
+             },
+@@ -101,81 +114,245 @@
+ 
+ 
+     private var restartCountFail = 0
+-    private val restartGenOtpHandler = Handler()
+-    private var restartGenOtpCallback = Runnable {
+-        if (isOn) {
+-            restartCountFail++
+-            autoClickService?.stopGetOtp()
++    private var restartAutoJob: Job? = null
++
++    private fun startAutoRestartJob() {
++
++        restartAutoJob?.cancel()
++
++        restartAutoJob = launch {
+ 
+-            //--force restart all flow after number failed
+-            if (restartCountFail == RESTART_FAIL_MAX) {
+-                restartCountFail = 0
+-                openAppTcb()
+-            }
+-            startGetOtp()
+-        }
+-    }
+-
+-    private fun startGetOtp() {
+-
+-        if (!isOn) {
+-            return
+-        }
++            delay(RESTART_INTERVAL)
++
++            autoClickServiceVcb?.stopGetOtp()
++
++            if (isCompletedTransfer || restartCountFail == RESTART_FAIL_MAX) {
++
++                if (isCompletedTransfer){
++                    sendLog("[ERROR] \n" +
++                            "Cannot check status of this transaction. >>> PLEASE CHECK MANUAL <<<")
++                }
++
++                if (restartCountFail == RESTART_FAIL_MAX){
++                    sendLog("[ERROR] \n" +
++                            "Failed retry transfer this transaction. >>> PLEASE CHECK MANUAL <<<")
++                }
+ 
+-        if (autoClickService?.isTcbOpening() == false) {
+-            openAppTcb()
+-
+-            /**
+-             * wait for tcb app is opened
+-             */
+-            Handler().postDelayed({
+-                startGetOtp()
+-            }, 5000)
+-        } else {
+-            if (!transactionID.isNullOrEmpty()) {
+-                onGetTransIDSuccess(transactionID)
++                //clear current transaction to process next transaction after n failed or transfer was marked completed
++                transferInfo = null
+             } else {
+-                pendingTransactionJob.run()
++                restartCountFail++
+             }
++
++            processTransaction()
+         }
+     }
+ 
+-    private fun stopGetOtp() {
+-        autoClickService?.stopGetOtp()
++    private var isCompletedTransfer: Boolean = false
++
++    private fun stopAuto() {
++
++        autoClickServiceVcb?.stopGetOtp()
+         restartCountFail = 0
+-        restartGenOtpHandler.removeCallbacks(restartGenOtpCallback)
+-        pendingTransactionHandler.removeCallbacks(pendingTransactionJob)
++
++        getTransactionJob?.cancel()
++        restartAutoJob?.cancel()
+     }
+ 
+-    private fun openAppTcb() {
+-        val packageName = "com.fastacash.tcb"
+-        if (isAppInstalled(this, packageName)) {
++    private fun openBankApp() {
++        val packageName = getString(R.string.bank_package_id)
+ 
++        try {
+             val intent = packageManager.getLaunchIntentForPackage(packageName)
+-            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK
++            intent?.flags = Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK
+ 
+             startActivity(intent)
++        } catch (e: Exception) {
++            Toast.makeText(this, "App not installed", Toast.LENGTH_SHORT).show()
++        }
++    }
++
++    private val testTransaction: Queue<TransferInfo> by lazy {
++
++        val queue: Queue<TransferInfo> = LinkedList()
++
++        queue.add(TransferInfo("19033272714017",
++            "huỳnh nam",
++            "techcombank",
++            "1000",
++            "WERTRSDFDASFWEFW",
++            true))
++
++        queue.add(TransferInfo("19033272714017",
++            "huynh nam",
++            "techcombank",
++            "1000",
++            "WERTRSDFDASFWEFW",
++            true))
++
++        queue.add(TransferInfo("19033272714017",
++            "huỳnh chấn nam",
++            "techcombank",
++            "1000",
++            "WERTRSDFDASFWEFW",
++            true))
++
++        queue.add(TransferInfo("0331000472949",
++            "LÂM THỊ BÉ",
++            "vcb",
++            "1000",
++            "AAAAAAAAAAAAAAA",
++            false))
++
++        queue.add(TransferInfo("0331000472949",
++            "LÂM THỊ BÉ HIỀN",
++            "vcb",
++            "1000",
++            "AAAAAAAAAAAAAAA",
++            false))
++
++        queue.add(TransferInfo("19033272714017",
++            "huynh nam",
++            "techcombank",
++            "1000",
++            "WERTRSDFDASFWEFW",
++            true))
++
++        queue.add(TransferInfo("19033272714017",
++            "huỳnh chấn nam",
++            "techcombank",
++            "1000",
++            "WERTRSDFDASFWEFW",
++            true))
++
++        queue
++    }
++
++    private var getTransactionJob: Job? = null
++
++    private fun startGetTransactionJob() {
++
++        getTransactionJob?.cancel()
++
++        getTransactionJob = launch {
++
++            /*flow {
++                    emit(ApiService.apiService.getPendingTransaction().await())
++                }.flowOn(Dispatchers.IO).catch {
++                    //emit(null)
++                    onGetTransactionFailed()
++                }.collect {
++                    it.transaction_code.takeIf { !it.isNullOrEmpty() }?.also {
++                        onGetTransSuccess(it)
++                    } ?: kotlin.run {
++                        onGetTransactionFailed()
++                    }
++                }*/
++
++            delay(1000)
++
++            val trans = testTransaction.poll()
++
++            if (trans != null) {
++                startTransfer(trans)
++            } else {
++                delay(POOLING_INTERVAL)
++                startGetTransactionJob()
++            }
++        }
++    }
++
++    private fun startTransfer(trans: TransferInfo) {
++        transferInfo = trans
++        transferInfo?.let { transferInfo ->
++            authenticateAccount?.let { account ->
++
++                sendLog("=====================================================\n" +
++                        "[START]\n" +
++                        "${transferInfo}")
++
++                autoClickServiceVcb?.startGetOtp(transferInfo,
++                    account,
++                    ::onTransferCompleted,
++                    ::onTransferSuccess,
++                    ::onTransferFailed)
++
++                startAutoRestartJob()
++            }
++        }
++    }
++
++    private fun processTransaction() {
++
++        //////////// clear current job
++        restartAutoJob?.cancel()
++        getTransactionJob?.cancel()
++
++        if (transferInfo == null) {
++
++            isCompletedTransfer = false
++            restartCountFail = 0
++
++            startGetTransactionJob()
+         } else {
+-            Toast.makeText(this, "App not installed", Toast.LENGTH_SHORT).show()
++            openBankApp()
++            startTransfer(transferInfo!!)
+         }
+     }
++
++    private fun onTransferCompleted() {
++        // call api update order with state transferred
++        isCompletedTransfer = true
++        sendLog("TRANSFER COMPLETED")
++    }
+ 
+-    fun isAppInstalled(context: Context, packageName: String?): Boolean {
+-        val pm = context.packageManager
+-        try {
+-            pm.getPackageInfo(packageName, PackageManager.GET_ACTIVITIES)
+-            return true
+-        } catch (e: PackageManager.NameNotFoundException) {
++    private fun onTransferSuccess() {
++
++        /* ApiService.apiService.sendOtp(otp, transactionID).observeOn(AndroidSchedulers.mainThread())
++             .subscribeOn(Schedulers.io()).subscribe({
++
++             }, {
++                 it.printStackTrace()
++             })*/
++
++        // call api update order with state success
++        sendLog("TRANSFER SUCCEED")
++
++        transferInfo = null
++        processTransaction()
++    }
++
++    private fun onTransferFailed(reason: TransferFail) {
++        when (reason) {
++            is TransferFail.WrongAccountName -> {
++
++                val text = "[ERROR] \n" +
++                        "Bank account name not match"
++                sendLog(text)
++
++                transferInfo = null
++                processTransaction()
++            }
+         }
+-        return false
+     }
++
++    private fun sendLog(log: String) = launch {
++        flow {
++            emit(ApiService.apiService.sendTelegramLog(log).await())
++        }.flowOn(Dispatchers.IO).catch {
++            //emit(null)
++        }.collect {
++
++        }
++    }
+ 
+     override fun onDestroy() {
+         super.onDestroy()
+         manager.removeView(view)
++        stopAuto()
+     }
+ 
+-    override fun onConfigurationChanged(newConfig: Configuration?) {
++    override fun onConfigurationChanged(newConfig: Configuration) {
+         super.onConfigurationChanged(newConfig)
+         "FloatingClickService onConfigurationChanged".logd()
+         val x = params.x
+@@ -187,60 +364,7 @@
+         manager.updateViewLayout(view, params)
+     }
+ 
+-    private val pendingTransactionHandler = Handler()
+-
+-    private val pendingTransactionJob = Runnable {
+-
+-        ApiService.apiService.getPendingTransaction().observeOn(AndroidSchedulers.mainThread())
+-            .subscribeOn(Schedulers.io()).subscribe({
+-
+-                it.transaction_code.takeIf { !it.isNullOrEmpty() }?.also {
+-                    onGetTransIDSuccess(it)
+-                } ?: kotlin.run {
+-                    onGetTransIDFailed()
+-                }
+-            }, {
+-                it.printStackTrace()
+-                onGetTransIDFailed()
+-            })
+-    }
+-
+-    private fun onGetTransIDSuccess(transID: String) {
+-        transactionID = transID
+-        autoClickService?.startGetOtp(transID,
+-            otpPin,
+-            ::onGetSmartOtpSuccess,
+-            ::onGetSmartOtpFailed)
+-
+-        restartGenOtpHandler.removeCallbacks(restartGenOtpCallback)
+-        restartGenOtpHandler.postDelayed(restartGenOtpCallback, RESTART_INTERVAL)
+-
+-        pendingTransactionHandler.removeCallbacks(pendingTransactionJob)
+-    }
+-
+-    private fun onGetTransIDFailed() {
+-        pendingTransactionHandler.postDelayed(pendingTransactionJob, POOLING_INTERVAL)
+-    }
+-
+-    private fun onGetSmartOtpSuccess(otp: String) {
+-
+-        ApiService.apiService.sendOtp(otp, transactionID).observeOn(AndroidSchedulers.mainThread())
+-            .subscribeOn(Schedulers.io()).subscribe({
+-
+-            }, {
+-                it.printStackTrace()
+-            })
+-
+-        transactionID = ""
+-        restartCountFail = 0
+-        restartGenOtpHandler.removeCallbacks(restartGenOtpCallback)
+-        pendingTransactionJob.run()
+-    }
+-
+-    private fun onGetSmartOtpFailed() {
+-        //--force restart flow get otp
+-        openAppTcb()
+-        startGetOtp()
+-    }
++    override val coroutineContext: CoroutineContext
++        get() = SupervisorJob() + Dispatchers.Main
+ 
+ }
+\ No newline at end of file
+Index: gradle.properties
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># Project-wide Gradle settings.\n# IDE (e.g. Android Studio) users:\n# Gradle settings configured through the IDE *will override*\n# any settings specified in this file.\n# For more details on how to configure your build environment visit\n# http://www.gradle.org/docs/current/userguide/build_environment.html\n# Specifies the JVM arguments used for the daemon process.\n# The setting is particularly useful for tweaking memory settings.\norg.gradle.jvmargs=-Xmx1536m\n# When configured, Gradle will run in incubating parallel mode.\n# This option should only be used with decoupled projects. More details, visit\n# http://www.gradle.org/docs/current/userguide/multi_project_builds.html#sec:decoupled_projects\n# org.gradle.parallel=true\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>ISO-8859-1
+===================================================================
+diff --git a/gradle.properties b/gradle.properties
+--- a/gradle.properties	
++++ b/gradle.properties	
+@@ -11,3 +11,6 @@
+ # This option should only be used with decoupled projects. More details, visit
+ # http://www.gradle.org/docs/current/userguide/multi_project_builds.html#sec:decoupled_projects
+ # org.gradle.parallel=true
++
++
++android.useAndroidX=true
+\ No newline at end of file
+Index: app/src/main/java/com/fiahub/nam/autosmartotp/service/api/PendingTransaction.kt
+===================================================================
+diff --git a/app/src/main/java/com/fiahub/nam/autosmartotp/service/api/PendingTransaction.kt b/app/src/main/java/com/fiahub/autosmartotp/vcb/service/api/PendingTransaction.kt
+rename from app/src/main/java/com/fiahub/nam/autosmartotp/service/api/PendingTransaction.kt
+rename to app/src/main/java/com/fiahub/autosmartotp/vcb/service/api/PendingTransaction.kt
+--- a/app/src/main/java/com/fiahub/nam/autosmartotp/service/api/PendingTransaction.kt	
++++ b/app/src/main/java/com/fiahub/autosmartotp/vcb/service/api/PendingTransaction.kt	
+@@ -1,3 +1,3 @@
+-package com.fiahub.nam.autosmartotp.service.api
++package com.fiahub.autosmartotp.vcb.service.api
+ 
+ data class PendingTransaction(val transaction_code: String?)
+Index: app/src/main/java/com/fiahub/nam/autosmartotp/TouchAndDragListener.kt
+===================================================================
+diff --git a/app/src/main/java/com/fiahub/nam/autosmartotp/TouchAndDragListener.kt b/app/src/main/java/com/fiahub/autosmartotp/vcb/TouchAndDragListener.kt
+rename from app/src/main/java/com/fiahub/nam/autosmartotp/TouchAndDragListener.kt
+rename to app/src/main/java/com/fiahub/autosmartotp/vcb/TouchAndDragListener.kt
+--- a/app/src/main/java/com/fiahub/nam/autosmartotp/TouchAndDragListener.kt	
++++ b/app/src/main/java/com/fiahub/autosmartotp/vcb/TouchAndDragListener.kt	
+@@ -1,4 +1,4 @@
+-package com.fiahub.nam.autosmartotp
++package com.fiahub.autosmartotp.vcb
+ 
+ import android.annotation.SuppressLint
+ import android.view.MotionEvent
+Index: app/src/main/java/com/fiahub/autosmartotp/vcb/model/TransferInfo.kt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/src/main/java/com/fiahub/autosmartotp/vcb/model/TransferInfo.kt b/app/src/main/java/com/fiahub/autosmartotp/vcb/model/TransferInfo.kt
+new file mode 100644
+--- /dev/null	
++++ b/app/src/main/java/com/fiahub/autosmartotp/vcb/model/TransferInfo.kt	
+@@ -0,0 +1,8 @@
++package com.fiahub.autosmartotp.vcb.model
++
++data class TransferInfo(val transferBankAccountNum: String,
++                        val transferBankAccountName: String,
++                        val transferBankBranch: String,
++                        val transferMoney: String,
++                        val transferNote: String,
++                        val isTransferOutSideVcb: Boolean)
+\ No newline at end of file
+Index: app/src/main/java/com/fiahub/nam/autosmartotp/MainActivity.kt
+===================================================================
+diff --git a/app/src/main/java/com/fiahub/nam/autosmartotp/MainActivity.kt b/app/src/main/java/com/fiahub/autosmartotp/vcb/MainActivity.kt
+rename from app/src/main/java/com/fiahub/nam/autosmartotp/MainActivity.kt
+rename to app/src/main/java/com/fiahub/autosmartotp/vcb/MainActivity.kt
+--- a/app/src/main/java/com/fiahub/nam/autosmartotp/MainActivity.kt	
++++ b/app/src/main/java/com/fiahub/autosmartotp/vcb/MainActivity.kt	
+@@ -1,4 +1,4 @@
+-package com.fiahub.nam.autosmartotp
++package com.fiahub.autosmartotp.vcb
+ 
+ import android.accessibilityservice.AccessibilityServiceInfo
+ import android.annotation.TargetApi
+@@ -11,8 +11,8 @@
+ import android.support.v7.app.AppCompatActivity
+ import android.view.accessibility.AccessibilityManager
+ import android.widget.Toast
+-import com.fiahub.nam.autosmartotp.service.FloatingClickService
+-import com.fiahub.nam.autosmartotp.service.autoClickService
++import com.fiahub.autosmartotp.vcb.service.FloatingClickService
++import com.fiahub.autosmartotp.vcb.service.autoClickServiceVcb
+ import kotlinx.android.synthetic.main.activity_main.*
+ 
+ 
+@@ -20,16 +20,14 @@
+ 
+ class MainActivity : AppCompatActivity() {
+ 
+-    private var serviceIntent: Intent? = null
+-
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
+         setContentView(R.layout.activity_main)
++
+         button.setOnClickListener {
+             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N || Settings.canDrawOverlays(this)) {
+ 
+-                FloatingClickService.start(this, edtPin.text.toString())
+-
++                FloatingClickService.start(this, edtPin.text.toString(), edtPass.text.toString())
+                 onBackPressed()
+             } else {
+                 askPermission()
+@@ -77,11 +75,11 @@
+ 
+         stopService(Intent(this@MainActivity, FloatingClickService::class.java))
+ 
+-        autoClickService?.let {
++        autoClickServiceVcb?.let {
+             "stop auto click service".logd()
+             it.stopSelf()
+             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) return it.disableSelf()
+-            autoClickService = null
++            autoClickServiceVcb = null
+         }
+         super.onDestroy()
+     }
+Index: app/src/main/res/layout/activity_main.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?xml version=\"1.0\" encoding=\"utf-8\"?>\n<LinearLayout\n    xmlns:android=\"http://schemas.android.com/apk/res/android\"\n    xmlns:app=\"http://schemas.android.com/apk/res-auto\"\n    xmlns:tools=\"http://schemas.android.com/tools\"\n    android:layout_width=\"match_parent\"\n    android:layout_height=\"match_parent\"\n    android:padding=\"16dp\"\n    android:orientation=\"vertical\"\n    tools:context=\"com.fiahub.nam.autosmartotp.MainActivity\">\n\n    <TextView\n        android:layout_width=\"wrap_content\"\n        android:layout_height=\"wrap_content\"\n        android:text=\"Unlock smart otp Pin\"/>\n\n    <EditText\n        android:id=\"@+id/edtPin\"\n        android:layout_width=\"100dp\"\n        android:layout_height=\"wrap_content\"/>\n\n    <Button\n        android:id=\"@+id/button\"\n        android:layout_width=\"wrap_content\"\n        android:layout_height=\"wrap_content\"\n        android:layout_marginTop=\"20dp\"\n        android:text=\"start\"\n        app:layout_constraintBottom_toBottomOf=\"parent\"\n        app:layout_constraintRight_toRightOf=\"parent\"/>\n</LinearLayout>
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/src/main/res/layout/activity_main.xml b/app/src/main/res/layout/activity_main.xml
+--- a/app/src/main/res/layout/activity_main.xml	
++++ b/app/src/main/res/layout/activity_main.xml	
+@@ -7,7 +7,7 @@
+     android:layout_height="match_parent"
+     android:padding="16dp"
+     android:orientation="vertical"
+-    tools:context="com.fiahub.nam.autosmartotp.MainActivity">
++    tools:context="com.fiahub.autosmartotp.vcb.MainActivity">
+ 
+     <TextView
+         android:layout_width="wrap_content"
+@@ -17,6 +17,20 @@
+     <EditText
+         android:id="@+id/edtPin"
+         android:layout_width="100dp"
++        android:inputType="textPassword"
++        android:layout_height="wrap_content"
++        android:text="014952"/>
++
++    <TextView
++        android:layout_width="wrap_content"
++        android:layout_height="wrap_content"
++        android:text="Pass"/>
++
++    <EditText
++        android:id="@+id/edtPass"
++        android:layout_width="100dp"
++        android:inputType="textPassword"
++        android:text="+NamPro+12345"
+         android:layout_height="wrap_content"/>
+ 
+     <Button
+Index: app/src/main/res/xml/config.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><accessibility-service\n    xmlns:android=\"http://schemas.android.com/apk/res/android\"\n    android:accessibilityEventTypes=\"typeAllMask\"\n    android:accessibilityFeedbackType=\"feedbackGeneric\"\n    android:accessibilityFlags=\"flagReportViewIds\"\n    android:canPerformGestures=\"true\"\n    android:description=\"@string/accessibility_service_description\"\n    android:canRetrieveWindowContent=\"true\"/>\n\n    <!--android:accessibilityEventTypes=\"typeViewClicked|typeViewFocused\"-->
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/src/main/res/xml/config.xml b/app/src/main/res/xml/config.xml
+--- a/app/src/main/res/xml/config.xml	
++++ b/app/src/main/res/xml/config.xml	
+@@ -1,8 +1,8 @@
+ <accessibility-service
+     xmlns:android="http://schemas.android.com/apk/res/android"
+     android:accessibilityEventTypes="typeAllMask"
+-    android:accessibilityFeedbackType="feedbackGeneric"
+-    android:accessibilityFlags="flagReportViewIds"
++    android:accessibilityFeedbackType="feedbackGeneric|feedbackAllMask"
++    android:accessibilityFlags="flagDefault|flagIncludeNotImportantViews|flagReportViewIds"
+     android:canPerformGestures="true"
+     android:description="@string/accessibility_service_description"
+     android:canRetrieveWindowContent="true"/>
+Index: build.gradle
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>// Top-level build file where you can add configuration options common to all sub-projects/modules.\n\nbuildscript {\n    ext.kotlin_version = '1.3.71'\n    repositories {\n        google()\n        jcenter()\n    }\n    dependencies {\n        classpath 'com.android.tools.build:gradle:4.2.2'\n        classpath \"org.jetbrains.kotlin:kotlin-gradle-plugin:1.5.10\"\n\n        // NOTE: Do not place your application dependencies here; they belong\n        // in the individual module build.gradle files\n    }\n}\n\nallprojects {\n    repositories {\n        google()\n        jcenter()\n    }\n}\n\ntask clean(type: Delete) {\n    delete rootProject.buildDir\n}\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/build.gradle b/build.gradle
+--- a/build.gradle	
++++ b/build.gradle	
+@@ -1,14 +1,14 @@
+ // Top-level build file where you can add configuration options common to all sub-projects/modules.
+ 
+ buildscript {
+-    ext.kotlin_version = '1.3.71'
++    ext.kotlin_version = '1.6.21'
+     repositories {
+         google()
+         jcenter()
+     }
+     dependencies {
+         classpath 'com.android.tools.build:gradle:4.2.2'
+-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.5.10"
++        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.6.21"
+ 
+         // NOTE: Do not place your application dependencies here; they belong
+         // in the individual module build.gradle files
+Index: app/src/main/java/com/fiahub/autosmartotp/vcb/model/TransferFail.kt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/src/main/java/com/fiahub/autosmartotp/vcb/model/TransferFail.kt b/app/src/main/java/com/fiahub/autosmartotp/vcb/model/TransferFail.kt
+new file mode 100644
+--- /dev/null	
++++ b/app/src/main/java/com/fiahub/autosmartotp/vcb/model/TransferFail.kt	
+@@ -0,0 +1,5 @@
++package com.fiahub.autosmartotp.vcb.model
++
++sealed class TransferFail {
++    class WrongAccountName(val name: String) : TransferFail()
++}
+Index: app/build.gradle
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>apply plugin: 'com.android.application'\napply plugin: 'kotlin-android'\napply plugin: 'kotlin-android-extensions'\n\nandroid {\n    compileSdkVersion 28\n    defaultConfig {\n        applicationId \"com.fiahub.nam.autosmartotp\"\n        minSdkVersion 24\n        targetSdkVersion 28\n        versionCode 1\n        versionName \"1.0\"\n        testInstrumentationRunner \"android.support.test.runner.AndroidJUnitRunner\"\n    }\n    buildTypes {\n        release {\n            minifyEnabled true\n            shrinkResources true\n            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'\n            zipAlignEnabled true\n            debuggable false\n        }\n        debug {\n            debuggable true\n        }\n    }\n\n    flavorDimensions \"normal\"\n\n    productFlavors {\n        local {\n            dimension \"normal\"\n            resConfigs(\"en\", \"xxhdpi\")\n            minSdkVersion 21\n        }\n        googleplay {\n            dimension \"normal\"\n        }\n    }\n}\n\ndependencies {\n    implementation fileTree(dir: 'libs', include: ['*.jar'])\n    implementation\"org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version\"\n    implementation 'com.android.support:appcompat-v7:28.0.0'\n    implementation 'com.android.support.constraint:constraint-layout:1.1.3'\n    testImplementation 'junit:junit:4.12'\n    androidTestImplementation 'com.android.support.test:runner:1.0.2'\n    androidTestImplementation 'com.android.support.test.espresso:espresso-core:3.0.2'\n\n\n    // retrofit\n    implementation 'com.squareup.retrofit2:retrofit:2.4.0'\n    implementation 'com.squareup.retrofit2:converter-gson:2.4.0'\n    implementation 'com.squareup.okhttp3:logging-interceptor:4.4.1'\n    implementation 'com.squareup.okhttp3:okhttp:4.4.1'\n    implementation 'com.squareup.retrofit2:adapter-rxjava2:2.4.0'\n    implementation 'io.reactivex.rxjava2:rxandroid:2.1.1'\n\n}\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/build.gradle b/app/build.gradle
+--- a/app/build.gradle	
++++ b/app/build.gradle	
+@@ -3,11 +3,11 @@
+ apply plugin: 'kotlin-android-extensions'
+ 
+ android {
+-    compileSdkVersion 28
++    compileSdkVersion 31
+     defaultConfig {
+-        applicationId "com.fiahub.nam.autosmartotp"
++        applicationId "com.fiahub.autosmartotp.vcb"
+         minSdkVersion 24
+-        targetSdkVersion 28
++        targetSdkVersion 31
+         versionCode 1
+         versionName "1.0"
+         testInstrumentationRunner "android.support.test.runner.AndroidJUnitRunner"
+@@ -25,23 +25,11 @@
+         }
+     }
+ 
+-    flavorDimensions "normal"
+-
+-    productFlavors {
+-        local {
+-            dimension "normal"
+-            resConfigs("en", "xxhdpi")
+-            minSdkVersion 21
+-        }
+-        googleplay {
+-            dimension "normal"
+-        }
+-    }
+ }
+ 
+ dependencies {
+     implementation fileTree(dir: 'libs', include: ['*.jar'])
+-    implementation"org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
++
+     implementation 'com.android.support:appcompat-v7:28.0.0'
+     implementation 'com.android.support.constraint:constraint-layout:1.1.3'
+     testImplementation 'junit:junit:4.12'
+@@ -57,4 +45,11 @@
+     implementation 'com.squareup.retrofit2:adapter-rxjava2:2.4.0'
+     implementation 'io.reactivex.rxjava2:rxandroid:2.1.1'
+ 
++    // coroutine
++    implementation "androidx.lifecycle:lifecycle-livedata-ktx:2.4.1"
++    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.5.2'
++    implementation 'com.jakewharton.retrofit:retrofit2-kotlin-coroutines-adapter:0.9.2'
++    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.5.2'
++    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.4.1'
++
+ }
+Index: app/src/main/java/com/fiahub/autosmartotp/vcb/Utils.kt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/src/main/java/com/fiahub/autosmartotp/vcb/Utils.kt b/app/src/main/java/com/fiahub/autosmartotp/vcb/Utils.kt
+new file mode 100644
+--- /dev/null	
++++ b/app/src/main/java/com/fiahub/autosmartotp/vcb/Utils.kt	
+@@ -0,0 +1,23 @@
++package com.fiahub.autosmartotp.vcb
++
++object Utils {
++
++    fun removeUnicode(str: String): String {
++        var str = str
++        str = str.replace("à|á|ạ|ả|ã|â|ầ|ấ|ậ|ẩ|ẫ|ă|ằ|ắ|ặ|ẳ|ẵ".toRegex(), "a")
++        str = str.replace("è|é|ẹ|ẻ|ẽ|ê|ề|ế|ệ|ể|ễ".toRegex(), "e")
++        str = str.replace("ì|í|ị|ỉ|ĩ".toRegex(), "i")
++        str = str.replace("ò|ó|ọ|ỏ|õ|ô|ồ|ố|ộ|ổ|ỗ|ơ|ờ|ớ|ợ|ở|ỡ".toRegex(), "o")
++        str = str.replace("ù|ú|ụ|ủ|ũ|ư|ừ|ứ|ự|ử|ữ".toRegex(), "u")
++        str = str.replace("ỳ|ý|ỵ|ỷ|ỹ".toRegex(), "y")
++        str = str.replace("đ".toRegex(), "d")
++        str = str.replace("À|Á|Ạ|Ả|Ã|Â|Ầ|Ấ|Ậ|Ẩ|Ẫ|Ă|Ằ|Ắ|Ặ|Ẳ|Ẵ".toRegex(), "A")
++        str = str.replace("È|É|Ẹ|Ẻ|Ẽ|Ê|Ề|Ế|Ệ|Ể|Ễ".toRegex(), "E")
++        str = str.replace("Ì|Í|Ị|Ỉ|Ĩ".toRegex(), "I")
++        str = str.replace("Ò|Ó|Ọ|Ỏ|Õ|Ô|Ồ|Ố|Ộ|Ổ|Ỗ|Ơ|Ờ|Ớ|Ợ|Ở|Ỡ".toRegex(), "O")
++        str = str.replace("Ù|Ú|Ụ|Ủ|Ũ|Ư|Ừ|Ứ|Ự|Ử|Ữ".toRegex(), "U")
++        str = str.replace("Ỳ|Ý|Ỵ|Ỷ|Ỹ".toRegex(), "Y")
++        str = str.replace("Đ".toRegex(), "D")
++        return str
++    }
++}
+\ No newline at end of file
+Index: app/src/main/res/values/strings.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><resources>\n    <string name=\"app_name\">AutoSmartOtp</string>\n    <string name=\"accessibility_service_description\">TODO</string>\n    <string name=\"accessibility_service_name\">AutoSmartOtpService</string>\n    <string name=\"accessibility_service_id\">com.fiahub.nam.autosmartotp/.service.AutoClickService</string>\n</resources>\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+--- a/app/src/main/res/values/strings.xml	
++++ b/app/src/main/res/values/strings.xml	
+@@ -1,6 +1,8 @@
+ <resources>
+-    <string name="app_name">AutoSmartOtp</string>
++    <string name="app_name">AutoSmartOtpVCB</string>
+     <string name="accessibility_service_description">TODO</string>
+-    <string name="accessibility_service_name">AutoSmartOtpService</string>
+-    <string name="accessibility_service_id">com.fiahub.nam.autosmartotp/.service.AutoClickService</string>
++    <string name="accessibility_service_name">AutoSmartOtpVCBService</string>
++    <string name="accessibility_service_id">com.fiahub.autosmartotp.vcb/.service.AutoClickServiceVcb</string>
++    <string name="bank_package_id">com.VCB</string>
++
+ </resources>
+Index: app/src/test/java/com/fiahub/nam/autosmartotp/ExampleUnitTest.kt
+===================================================================
+diff --git a/app/src/test/java/com/fiahub/nam/autosmartotp/ExampleUnitTest.kt b/app/src/test/java/com/fiahub/autosmartotp/vcb/ExampleUnitTest.kt
+rename from app/src/test/java/com/fiahub/nam/autosmartotp/ExampleUnitTest.kt
+rename to app/src/test/java/com/fiahub/autosmartotp/vcb/ExampleUnitTest.kt
+--- a/app/src/test/java/com/fiahub/nam/autosmartotp/ExampleUnitTest.kt	
++++ b/app/src/test/java/com/fiahub/autosmartotp/vcb/ExampleUnitTest.kt	
+@@ -1,4 +1,4 @@
+-package com.fiahub.nam.autosmartotp
++package com.fiahub.autosmartotp.vcb
+ 
+ import org.junit.Test
+ 
+Index: app/src/main/java/com/fiahub/nam/autosmartotp/Extentions.kt
+===================================================================
+diff --git a/app/src/main/java/com/fiahub/nam/autosmartotp/Extentions.kt b/app/src/main/java/com/fiahub/autosmartotp/vcb/Extentions.kt
+rename from app/src/main/java/com/fiahub/nam/autosmartotp/Extentions.kt
+rename to app/src/main/java/com/fiahub/autosmartotp/vcb/Extentions.kt
+--- a/app/src/main/java/com/fiahub/nam/autosmartotp/Extentions.kt	
++++ b/app/src/main/java/com/fiahub/autosmartotp/vcb/Extentions.kt	
+@@ -1,4 +1,4 @@
+-package com.fiahub.nam.autosmartotp
++package com.fiahub.autosmartotp.vcb
+ 
+ import android.content.Context
+ import android.util.Log
+@@ -8,7 +8,7 @@
+  * Created on 2018/9/28.
+  * By nesto
+  */
+-private const val TAG = "AutoClickService"
++private const val TAG = "AutoClickServiceVcb"
+ 
+ fun Any.logd(tag: String = TAG) {
+     if (!BuildConfig.DEBUG) return
+Index: app/src/main/java/com/fiahub/autosmartotp/vcb/model/AuthenAccount.kt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/src/main/java/com/fiahub/autosmartotp/vcb/model/AuthenAccount.kt b/app/src/main/java/com/fiahub/autosmartotp/vcb/model/AuthenAccount.kt
+new file mode 100644
+--- /dev/null	
++++ b/app/src/main/java/com/fiahub/autosmartotp/vcb/model/AuthenAccount.kt	
+@@ -0,0 +1,3 @@
++package com.fiahub.autosmartotp.vcb.model
++
++data class AuthenticateAccount(val password: String, val unlockOtpPassword: String)
+\ No newline at end of file
+Index: app/src/main/AndroidManifest.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?xml version=\"1.0\" encoding=\"utf-8\"?>\n<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"\n          package=\"com.fiahub.nam.autosmartotp\">\n\n    <uses-permission android:name=\"android.permission.SYSTEM_ALERT_WINDOW\"/>\n    <uses-permission android:name=\"android.permission.INTERNET\"/>\n\n    <application\n        android:allowBackup=\"true\"\n        android:icon=\"@mipmap/ic_launcher\"\n        android:label=\"@string/app_name\"\n        android:roundIcon=\"@mipmap/ic_launcher_round\"\n        android:supportsRtl=\"true\"\n        android:theme=\"@style/AppTheme\">\n        <activity\n            android:name=\"com.fiahub.nam.autosmartotp.MainActivity\"\n            android:configChanges=\"orientation\"\n            android:launchMode=\"singleInstance\">\n            <intent-filter>\n                <action android:name=\"android.intent.action.MAIN\"/>\n\n                <category android:name=\"android.intent.category.LAUNCHER\"/>\n            </intent-filter>\n        </activity>\n\n        <service\n            android:name=\"com.fiahub.nam.autosmartotp.service.AutoClickService\"\n            android:label=\"@string/accessibility_service_name\"\n            android:permission=\"android.permission.BIND_ACCESSIBILITY_SERVICE\">\n            <intent-filter>\n                <action android:name=\"android.accessibilityservice.AccessibilityService\"/>\n            </intent-filter>\n\n            <meta-data\n                android:name=\"android.accessibilityservice\"\n                android:resource=\"@xml/config\"/>\n        </service>\n\n        <service\n            android:name=\"com.fiahub.nam.autosmartotp.service.FloatingClickService\"\n            android:configChanges=\"orientation\"\n            android:enabled=\"true\"\n            android:exported=\"false\"/>\n    </application>\n\n</manifest>
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+--- a/app/src/main/AndroidManifest.xml	
++++ b/app/src/main/AndroidManifest.xml	
+@@ -1,10 +1,15 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+-          package="com.fiahub.nam.autosmartotp">
++          package="com.fiahub.autosmartotp.vcb">
+ 
+     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+     <uses-permission android:name="android.permission.INTERNET"/>
+ 
++    <queries>
++        <package android:name="com.VCB" />
++    </queries>
++
++
+     <application
+         android:allowBackup="true"
+         android:icon="@mipmap/ic_launcher"
+@@ -12,10 +17,14 @@
+         android:roundIcon="@mipmap/ic_launcher_round"
+         android:supportsRtl="true"
+         android:theme="@style/AppTheme">
++
++
++
+         <activity
+-            android:name="com.fiahub.nam.autosmartotp.MainActivity"
++            android:name="com.fiahub.autosmartotp.vcb.MainActivity"
+             android:configChanges="orientation"
+-            android:launchMode="singleInstance">
++            android:launchMode="singleInstance"
++            android:exported="true">
+             <intent-filter>
+                 <action android:name="android.intent.action.MAIN"/>
+ 
+@@ -24,9 +33,10 @@
+         </activity>
+ 
+         <service
+-            android:name="com.fiahub.nam.autosmartotp.service.AutoClickService"
++            android:name="com.fiahub.autosmartotp.vcb.service.AutoClickServiceVcb"
+             android:label="@string/accessibility_service_name"
+-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
++            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
++            android:exported="true">
+             <intent-filter>
+                 <action android:name="android.accessibilityservice.AccessibilityService"/>
+             </intent-filter>
+@@ -37,7 +47,7 @@
+         </service>
+ 
+         <service
+-            android:name="com.fiahub.nam.autosmartotp.service.FloatingClickService"
++            android:name="com.fiahub.autosmartotp.vcb.service.FloatingClickService"
+             android:configChanges="orientation"
+             android:enabled="true"
+             android:exported="false"/>

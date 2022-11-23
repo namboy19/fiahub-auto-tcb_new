@@ -1,0 +1,10 @@
+<accessibility-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeAllMask"
+    android:accessibilityFeedbackType="feedbackGeneric|feedbackAllMask"
+    android:accessibilityFlags="flagDefault|flagIncludeNotImportantViews|flagReportViewIds"
+    android:canPerformGestures="true"
+    android:description="@string/accessibility_service_description"
+    android:canRetrieveWindowContent="true"/>
+
+    <!--android:accessibilityEventTypes="typeViewClicked|typeViewFocused"-->

@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">AutoSmartOtpTCB</string>
+    <string name="accessibility_service_description">TODO</string>
+    <string name="accessibility_service_name">AutoSmartOtpTCBService</string>
+    <string name="accessibility_service_id">com.fiahub.autosmartotp.tcb/.service.AutoClickServiceTcb</string>
+    <string name="bank_package_id">vn.com.techcombank.bb.app</string>
+</resources>
