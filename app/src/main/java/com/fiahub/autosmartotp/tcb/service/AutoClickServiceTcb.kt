@@ -146,9 +146,9 @@ class AutoClickServiceTcb : AccessibilityService(), CoroutineScope {
                 }
             }
 
-            isHomeScreen() -> {
+            isHomeScreen() -> kotlin.run {
                 if (currentScreen == SCREEN_HOME)
-                    return
+                    return@run
 
                 currentScreen = SCREEN_HOME
 
@@ -156,9 +156,9 @@ class AutoClickServiceTcb : AccessibilityService(), CoroutineScope {
                 isWaitingConfirmMemo = false
             }
 
-            isInputUnlockPassScreen() -> {
+            isInputUnlockPassScreen() -> kotlin.run {
                 if (currentScreen == SCREEN_UNLOCK_PASS)
-                    return
+                    return@run
 
                 currentScreen = SCREEN_UNLOCK_PASS
 
@@ -175,10 +175,10 @@ class AutoClickServiceTcb : AccessibilityService(), CoroutineScope {
                 }
             }
 
-            isConfirmLoginScreen() -> {
+            isConfirmLoginScreen() -> kotlin.run {
 
                 if (currentScreen == SCREEN_CONFIRM_LOGIN)
-                    return
+                    return@run
 
                 currentScreen = SCREEN_CONFIRM_LOGIN
 
@@ -190,10 +190,10 @@ class AutoClickServiceTcb : AccessibilityService(), CoroutineScope {
                 }
             }
 
-            isConfirmTransferScreen() -> {
+            isConfirmTransferScreen() -> kotlin.run {
 
                 if (currentScreen == SCREEN_CONFIRM_TRANSFER)
-                    return
+                    return@run
 
                 currentScreen = SCREEN_CONFIRM_TRANSFER
 

@@ -23,13 +23,16 @@
     <select />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="7dc75a03-7e0e-4f87-b4f2-e7b5eef4a30f" name="Default Changelist" comment="- auto transfer TCB" />
+    <list default="true" id="7dc75a03-7e0e-4f87-b4f2-e7b5eef4a30f" name="Default Changelist" comment="- auto transfer TCB">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/main/java/com/fiahub/autosmartotp/tcb/service/AutoClickServiceTcb.kt" beforeDir="false" afterPath="$PROJECT_DIR$/app/src/main/java/com/fiahub/autosmartotp/tcb/service/AutoClickServiceTcb.kt" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
-  <component name="ExecutionTargetManager" SELECTED_TARGET="device_and_snapshot_combo_box_target[R5CRC0MEEAN]" />
+  <component name="ExecutionTargetManager" SELECTED_TARGET="device_and_snapshot_combo_box_target[R9HR90LXV4T]" />
   <component name="ExternalProjectsData">
     <projectState path="$PROJECT_DIR$">
       <ProjectState />
@@ -264,7 +267,14 @@
       <option name="project" value="LOCAL" />
       <updated>1669187822788</updated>
     </task>
-    <option name="localTasksCounter" value="13" />
+    <task id="LOCAL-00013" summary="- auto transfer TCB">
+      <created>1669188134975</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1669188134975</updated>
+    </task>
+    <option name="localTasksCounter" value="14" />
     <servers />
   </component>
   <component name="Vcs.Log.History.Properties">
@@ -306,6 +316,15 @@
     <option name="LAST_COMMIT_MESSAGE" value="- auto transfer TCB" />
   </component>
   <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <breakpoints>
+        <line-breakpoint enabled="true" suspend="THREAD" type="kotlin-line">
+          <url>file://$PROJECT_DIR$/app/src/main/java/com/fiahub/autosmartotp/tcb/service/AutoClickServiceTcb.kt</url>
+          <line>235</line>
+          <option name="timeStamp" value="1" />
+        </line-breakpoint>
+      </breakpoints>
+    </breakpoint-manager>
     <watches-manager>
       <configuration name="app">
         <watch expression="webAccessibilityNodeInfo" language="kotlin" />
@@ -313,12 +332,8 @@
         <watch expression="accessibilityNodeInfo.getChild(0).getChild(0).getChild(0).getChild(1).getChild(3)" language="kotlin" />
       </configuration>
       <configuration name="Remote">
-        <watch expression="isStarted" language="kotlin" />
-        <watch expression="rootInActiveWindow?.findAccessibilityNodeInfosByViewId(&quot;vn.com.techcombank.bb.app:id/btnConfirm&quot;)" language="kotlin" />
-        <watch expression="rootInActiveWindow?.findAccessibilityNodeInfosByViewId(&quot;vn.com.techcombank.bb.app:id/doneBtn&quot;)" language="kotlin" />
-        <watch expression="rootInActiveWindow?.findAccessibilityNodeInfosByText(&quot;OK&quot;)" language="kotlin" />
         <watch expression="rootInActiveWindow?.findAccessibilityNodeInfosByViewId(&quot;vn.com.techcombank.bb.app:id/btnPositive&quot;)" language="kotlin" />
-        <watch expression="isHomeScreen()" language="kotlin" />
+        <watch expression="list.firstOrNull().id" language="kotlin" />
       </configuration>
     </watches-manager>
   </component>
