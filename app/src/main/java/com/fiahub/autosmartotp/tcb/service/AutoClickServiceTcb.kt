@@ -75,9 +75,7 @@ class AutoClickServiceTcb : AccessibilityService(), CoroutineScope {
     }
 
     private fun isHomeScreen(): Boolean {
-        return !rootInActiveWindow?.findAccessibilityNodeInfosByText("Đăng nhập")
-            .isNullOrEmpty() ||
-                !rootInActiveWindow?.findAccessibilityNodeInfosByViewId("vn.com.techcombank.bb.app:id/explorerWidget")
+        return !rootInActiveWindow?.findAccessibilityNodeInfosByViewId("vn.com.techcombank.bb.app:id/lyMainContent")
                     .isNullOrEmpty()
     }
 
@@ -144,16 +142,6 @@ class AutoClickServiceTcb : AccessibilityService(), CoroutineScope {
                         .build()
                     dispatchGesture(gestureDescription, null, null)
                 }
-            }
-
-            isHomeScreen() -> kotlin.run {
-                if (currentScreen == SCREEN_HOME)
-                    return@run
-
-                currentScreen = SCREEN_HOME
-
-                lastHomeScreenTime = System.currentTimeMillis()
-                isWaitingConfirmMemo = false
             }
 
             isInputUnlockPassScreen() -> kotlin.run {
@@ -224,6 +212,15 @@ class AutoClickServiceTcb : AccessibilityService(), CoroutineScope {
                         //isWaitingConfirmMemo = false
                     }
                 }
+            }
+
+            isHomeScreen() -> kotlin.run {
+                lastHomeScreenTime = System.currentTimeMillis()
+                if (currentScreen == SCREEN_HOME)
+                    return@run
+
+                currentScreen = SCREEN_HOME
+                isWaitingConfirmMemo = false
             }
 
             else -> {
